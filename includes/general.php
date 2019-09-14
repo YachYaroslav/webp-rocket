@@ -45,7 +45,7 @@ if ( class_exists( 'WP_CLI' ) ) {
 	 *
 	 * ## EXAMPLES
 	 *
-	 *     wp webp-rocket generate
+	 *     wp webp-rocket generate - Generate WebP sources for all png and jpeg images (where they are missed).
 	 *
 	 * @when after_wp_load
 	 *
@@ -57,7 +57,7 @@ if ( class_exists( 'WP_CLI' ) ) {
 				$image_attachments = get_posts( [
 					'post_type'      => 'attachment',
 					'post_status'    => 'inherit',
-					'post_mime_type' => 'image/jpeg',
+					'post_mime_type' => ['image/jpeg', 'image/png'],
 					'posts_per_page' => -1
 				] );
 
@@ -86,11 +86,21 @@ if ( class_exists( 'WP_CLI' ) ) {
 							$successfully_generated++;
 						} else {
 							$fullsize_path = get_attached_file( $image_attachment->ID );
-							$im_resource = @imagecreatefromjpeg( $fullsize_path );
+
+							switch ($image_attachment->post_mime_type) {
+								case 'image/png':
+									$im_resource = @imagecreatefrompng( $fullsize_path );
+									$webp_name = basename( $image_attachment->post_title, '.png' ) . '.webp';
+									break;
+								default:
+									$im_resource = @imagecreatefromjpeg( $fullsize_path );
+									$webp_name = basename( $image_attachment->post_title, '.jpg' ) . '.webp';
+									break;
+							}
+
 							if ( $im_resource ) {
 								$wp_upload_dir = wp_upload_dir();
 
-								$webp_name = basename( $image_attachment->post_title, '.jpg' ) . '.webp';
 								$webp_image = $wp_upload_dir['path'] . '/' . $webp_name;
 								imagewebp( $im_resource, $webp_image, 82 );
 								imagedestroy( $im_resource );
@@ -103,6 +113,10 @@ if ( class_exists( 'WP_CLI' ) ) {
 								];
 
 								$webp_attachment_id = wp_insert_attachment( $webp_attachment, $webp_image, $image_attachment->ID );
+
+								if ( $webp_attachment_id ) {
+									$successfully_generated++;
+								}
 
 								require_once ABSPATH . 'wp-admin/includes/image.php';
 
@@ -135,7 +149,7 @@ function webp_rocket_post_thumbnail_html( $html, $post_ID, $post_thumbnail_id, $
 	$picture = '<picture>';
 	$thumbnail = get_post( $post_thumbnail_id );
 	$regex_picture = '/(width|height|class|alt|src)="[^"]*"/';
-	if ( 'image/jpeg' == $thumbnail->post_mime_type ) {
+	if ( in_array( $thumbnail->post_mime_type, ['image/jpeg', 'image/png'] ) ) {
 		$webp_children = get_children( [
 			'post_parent'    => $thumbnail->ID,
 			'post_status'    => 'inherit',
@@ -147,11 +161,14 @@ function webp_rocket_post_thumbnail_html( $html, $post_ID, $post_thumbnail_id, $
 			remove_filter( 'post_thumbnail_html', 'webp_rocket_post_thumbnail_html' );
 			$webp_picture = str_replace( '<img ', "<source type=\"$webp_attachment->post_mime_type\" ", wp_get_attachment_image( $webp_attachment->ID, $size ) );
 			add_filter( 'post_thumbnail_html', 'webp_rocket_post_thumbnail_html', 10, 5 );
+			/* WebP <source> */
 			$picture .= preg_replace( $regex_picture, '', $webp_picture );
 		}
 	}
 	$picture_current = str_replace( '<img ', "<source type=\"$thumbnail->post_mime_type\" ", $html );
+	/* standard <source> */
 	$picture .= preg_replace( $regex_picture, '', $picture_current );
+	/* <img> */
 	$picture .= preg_replace( '/(srcset|sizes)="[^"]+"/', '', $html );
 	$picture .= '</picture>';
 	return $picture;
